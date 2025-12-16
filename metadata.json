@@ -1,0 +1,5 @@
+{
+  "name": "RM Secure Vault",
+  "description": "Enterprise-grade, zero-knowledge encrypted file storage solution using client-side AES-256-GCM encryption.",
+  "requestFramePermissions": []
+}
