@@ -10,8 +10,10 @@ export interface EncryptedFile {
   ownerId: string;
   encryptedMetadata: string; // Base64 encoded JSON string { name, type, size, iv }
   metadataIv: string; // IV used for metadata encryption
-  encryptedData: Blob; // The actual encrypted file content
+  storagePath: string; // Path in Firebase Storage
   dataIv: string; // IV used for file content encryption
+  thumbnailPath?: string; // Path to encrypted thumbnail in Storage
+  thumbnailIv?: string; // IV for thumbnail
   createdAt: number;
 }
 

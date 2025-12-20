@@ -1,19 +1,18 @@
 import React, { createContext, useContext, useState, useEffect, useCallback } from 'react';
 import { User, DecryptedFile, EncryptedFile, ToastMessage } from '../types';
 import * as cryptoService from '../services/cryptoService';
-import { dbService } from '../services/dbService';
+import { supabase } from '../services/supabase';
 
 interface VaultContextType {
   user: User | null;
   files: DecryptedFile[];
   isLoading: boolean;
   toasts: ToastMessage[];
-  login: (username: string, password: string) => Promise<boolean>;
-  register: (username: string, password: string) => Promise<boolean>;
+  login: (email: string, password: string) => Promise<boolean>;
+  register: (email: string, password: string) => Promise<boolean>;
   logout: () => void;
-  uploadFile: (file: File) => Promise<void>;
-  downloadFile: (fileId: string) => Promise<void>;
-  deleteFile: (fileId: string) => Promise<void>;
+  resetPassword: (email: string) => Promise<boolean>;
+  updatePassword: (password: string) => Promise<boolean>;
   refreshFiles: () => void;
 }
 
@@ -23,7 +22,7 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const [user, setUser] = useState<User | null>(null);
   const [masterKey, setMasterKey] = useState<CryptoKey | null>(null);
   const [files, setFiles] = useState<DecryptedFile[]>([]);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const addToast = (type: 'success' | 'error' | 'info', message: string) => {
@@ -34,107 +33,213 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }, 5000);
   };
 
-  const register = async (username: string, password: string): Promise<boolean> => {
+  // Monitor Supabase Auth State
+  useEffect(() => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      if (!session) {
+        setUser(null);
+        setMasterKey(null);
+        setFiles([]);
+        setIsLoading(false);
+      } else {
+        setIsLoading(false);
+      }
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  const register = async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
-      // Check if exists
-      const existing = await dbService.getUser(username);
-      if (existing) {
-        addToast('error', 'User already exists');
-        return false;
-      }
-
-      // 1. Generate Salt
+      // 1. Derive Key FIRST so we can save it with the user
       const salt = cryptoService.generateSalt();
-      
-      // 2. Derive Key
       const key = await cryptoService.deriveMasterKey(password, salt);
-      
-      // 3. Generate Verifier
       const verifier = await cryptoService.generateVerifier(key);
 
-      const newUser: User = {
-        id: crypto.randomUUID(),
-        username,
+      // 2. SignUp with Supabase & Store Metadata
+      // CRITICAL: We store salt/verifier in user_metadata so it persists 
+      // even if RLS blocks DB inserts for unverified users.
+      const { data: authData, error: authError } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: {
+            username: email.split('@')[0],
+            salt: salt,
+            verifier: verifier
+          }
+        }
+      });
+
+      if (authError) throw authError;
+      if (!authData.user) throw new Error("No user created");
+
+      const uid = authData.user.id;
+
+      // 3. Attempt to Sync to public.users (Optional/Best Effort)
+      // This might fail if email is not verified yet due to RLS, but that's okay
+      // because we have the data in metadata now.
+      await supabase.from('users').insert([{
+        id: uid,
+        email: email,
         salt,
         verifier
-      };
+      }]).then(({ error }) => {
+        if (error) console.log("Note: Public profile creation delayed until verification.");
+      });
 
-      await dbService.saveUser(newUser);
-      
-      // Auto login
-      setUser(newUser);
-      setMasterKey(key);
-      addToast('success', 'Vault created successfully');
+      // 4. Log in immediately if session is active (no email verify required)
+      if (authData.session) {
+        setUser({ id: uid, username: email.split('@')[0], salt, verifier });
+        setMasterKey(key);
+        addToast('success', 'Vault created successfully');
+      } else {
+        addToast('info', 'Please check your email to verify account');
+      }
+
       return true;
-    } catch (e) {
-      console.error(e);
-      addToast('error', 'Registration failed');
-      return false;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const login = async (username: string, password: string): Promise<boolean> => {
+  const login = async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
-      const userRecord = await dbService.getUser(username);
-      if (!userRecord) {
-        addToast('error', 'User not found');
+      // 1. SignIn
+      const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+        email,
+        password,
+      });
+
+      if (authError) {
+        if (authError.message.includes('Email not confirmed')) {
+          addToast('error', 'Please verify your email address first.');
+        } else {
+          throw authError;
+        }
         return false;
       }
+      if (!authData.user) throw new Error("Login failed");
 
-      const key = await cryptoService.deriveMasterKey(password, userRecord.salt);
-      const isValid = await cryptoService.verifyKey(key, userRecord.verifier);
+      const currentUser = authData.user;
+
+      // 2. Get Salt/Verifier (Try Metadata FIRST)
+      let salt = currentUser.user_metadata?.salt;
+      let verifier = currentUser.user_metadata?.verifier;
+
+      // Fallback: Try public.users table (Legacy)
+      if (!salt || !verifier) {
+        const { data: dbUser } = await supabase
+          .from('users')
+          .select('*')
+          .eq('id', currentUser.id)
+          .single();
+
+        if (dbUser) {
+          salt = dbUser.salt;
+          verifier = dbUser.verifier;
+        }
+      }
+
+      if (!salt || !verifier) {
+        throw new Error('User profile missing keys. Please reset account.');
+      }
+
+      // 3. Derive & Verify
+      const key = await cryptoService.deriveMasterKey(password, salt);
+      const isValid = await cryptoService.verifyKey(key, verifier);
 
       if (isValid) {
-        setUser(userRecord);
+        setUser({
+          id: currentUser.id,
+          username: currentUser.user_metadata?.username || email.split('@')[0],
+          salt: salt,
+          verifier: verifier
+        });
         setMasterKey(key);
         addToast('success', 'Vault unlocked');
         return true;
       } else {
         addToast('error', 'Invalid password');
+        await supabase.auth.signOut();
         return false;
       }
-    } catch (e) {
-      console.error(e);
-      addToast('error', 'Login failed');
-      return false;
+    } catch (e: any) {
+      console.error("Login Core Error:", e);
+      throw e;
     } finally {
       setIsLoading(false);
     }
   };
 
-  const logout = () => {
+  const logout = async () => {
+    await supabase.auth.signOut();
     setUser(null);
     setMasterKey(null);
     setFiles([]);
+  };
+
+  const resetPassword = async (email: string): Promise<boolean> => {
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.resetPasswordForEmail(email, {
+        redirectTo: `${window.location.origin}/auth?reset=true`,
+      });
+      addToast('success', 'Recovery email sent. Please check your inbox.');
+      return true;
+    } catch (e: any) {
+      console.error("Reset Password Core Error:", e);
+      throw e;
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const updatePassword = async (password: string): Promise<boolean> => {
+    setIsLoading(true);
+    try {
+      const { error } = await supabase.auth.updateUser({ password });
+      if (error) throw error;
+      addToast('success', 'Password updated successfully. Please log in.');
+      return true;
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const loadFiles = useCallback(async () => {
     if (!user || !masterKey) return;
     setIsLoading(true);
     try {
-      const encryptedFiles = await dbService.getFiles(user.id);
+      const { data: encryptedFiles, error } = await supabase
+        .from('files')
+        .select('*')
+        .eq('owner_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
       const decryptedFiles: DecryptedFile[] = [];
 
-      for (const ef of encryptedFiles) {
+      for (const ef of encryptedFiles || []) {
         try {
-          const meta = await cryptoService.decryptMetadata(ef.encryptedMetadata, ef.metadataIv, masterKey);
+          const meta = await cryptoService.decryptMetadata(ef.encrypted_metadata, ef.metadata_iv, masterKey);
           decryptedFiles.push({
             id: ef.id,
             name: meta.name,
             type: meta.type,
             size: meta.size,
-            createdAt: ef.createdAt
+            createdAt: ef.created_at
           });
         } catch (e) {
-          console.error(`Failed to decrypt metadata for file ${ef.id}`, e);
+          console.error(`Failed to decrypt file ${ef.id}`, e);
         }
       }
-      setFiles(decryptedFiles.sort((a, b) => b.createdAt - a.createdAt));
+      setFiles(decryptedFiles);
     } catch (e) {
+      console.error(e);
       addToast('error', 'Failed to load files');
     } finally {
       setIsLoading(false);
@@ -147,43 +252,75 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     }
   }, [user, masterKey, loadFiles]);
 
+  const generateThumbnail = async (file: File): Promise<{ blob: Blob | null }> => {
+    if (!file.type.startsWith('image/')) return { blob: null };
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const MAX_SIZE = 300;
+        let width = img.width, height = img.height;
+        if (width > height) { if (width > MAX_SIZE) { height *= MAX_SIZE / width; width = MAX_SIZE; } }
+        else { if (height > MAX_SIZE) { width *= MAX_SIZE / height; height = MAX_SIZE; } }
+        canvas.width = width; canvas.height = height;
+        const ctx = canvas.getContext('2d');
+        ctx?.drawImage(img, 0, 0, width, height);
+        canvas.toBlob((blob) => resolve({ blob }), 'image/jpeg', 0.7);
+      };
+      img.onerror = () => resolve({ blob: null });
+      img.src = URL.createObjectURL(file);
+    });
+  };
+
   const uploadFile = async (file: File) => {
     if (!user || !masterKey) return;
     setIsLoading(true);
-    
-    // Safety check for demo environment memory
-    if (file.size > 50 * 1024 * 1024) {
-      addToast('error', 'Demo limit: Max 50MB per file');
-      setIsLoading(false);
-      return;
-    }
 
     try {
       const arrayBuffer = await file.arrayBuffer();
-      
-      // Encrypt Body
       const { encryptedBuffer, iv: dataIv } = await cryptoService.encryptData(arrayBuffer, masterKey);
-      
-      // Encrypt Metadata
+
+      let thumbnailPath = null;
+      let thumbnailIv = null;
+      const { blob: thumbBlob } = await generateThumbnail(file);
+
+      if (thumbBlob) {
+        const thumbArrayBuffer = await thumbBlob.arrayBuffer();
+        const { encryptedBuffer: encThumb, iv: thumbIv } = await cryptoService.encryptData(thumbArrayBuffer, masterKey);
+
+        const thumbPath = `vaults/${user.id}/${crypto.randomUUID()}.thumb`;
+        const { error: uploadError } = await supabase.storage.from('vault').upload(thumbPath, encThumb);
+        if (uploadError) throw uploadError;
+
+        thumbnailPath = thumbPath;
+        thumbnailIv = thumbIv;
+      }
+
+      const fileId = crypto.randomUUID();
+      const storagePath = `vaults/${user.id}/${fileId}.enc`;
+
+      const { error: uploadError } = await supabase.storage.from('vault').upload(storagePath, encryptedBuffer);
+      if (uploadError) throw uploadError;
+
       const metadata = { name: file.name, type: file.type, size: file.size };
       const { encryptedText: encryptedMetadata, iv: metadataIv } = await cryptoService.encryptMetadata(metadata, masterKey);
 
-      const newFile: EncryptedFile = {
-        id: crypto.randomUUID(),
-        ownerId: user.id,
-        encryptedMetadata,
-        metadataIv,
-        encryptedData: new Blob([encryptedBuffer], { type: 'application/octet-stream' }),
-        dataIv,
-        createdAt: Date.now()
-      };
+      const { error: dbError } = await supabase.from('files').insert([{
+        id: fileId,
+        owner_id: user.id,
+        storage_path: storagePath,
+        encrypted_metadata: encryptedMetadata,
+        metadata_iv: metadataIv,
+        data_iv: dataIv,
+        thumbnail_path: thumbnailPath,
+        thumbnail_iv: thumbnailIv,
+        created_at: Date.now()
+      }]);
 
-      await dbService.saveFile(newFile);
+      if (dbError) throw dbError;
+
       addToast('success', 'File encrypted & uploaded');
       loadFiles();
-    } catch (e) {
-      console.error(e);
-      addToast('error', 'Upload failed');
     } finally {
       setIsLoading(false);
     }
@@ -191,30 +328,20 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   const downloadFile = async (fileId: string) => {
     if (!user || !masterKey) return;
-    
-    // Find the file metadata first to get name
     const fileMeta = files.find(f => f.id === fileId);
     if (!fileMeta) return;
 
-    // We need to fetch the raw encrypted file again
-    // In a real app we might optimize this, but here we just fetch all and filter
-    // or update dbService to get one. Let's assume we can get it from the full list for now or fetch.
-    // To be efficient in this demo structure, let's fetch all (since dbService.getFiles returns all).
-    // Optimization: Add dbService.getFile(id)
-    const allEncrypted = await dbService.getFiles(user.id);
-    const target = allEncrypted.find(f => f.id === fileId);
-    
-    if (!target) {
-      addToast('error', 'File not found on disk');
-      return;
-    }
-
     try {
-      const encryptedArrayBuffer = await target.encryptedData.arrayBuffer();
-      const decryptedBuffer = await cryptoService.decryptData(encryptedArrayBuffer, target.dataIv, masterKey);
+      const { data: ef, error: dbError } = await supabase.from('files').select('*').eq('id', fileId).single();
+      if (dbError || !ef) throw new Error("File not found");
+
+      const { data: blobData, error: downloadError } = await supabase.storage.from('vault').download(ef.storage_path);
+      if (downloadError) throw downloadError;
+
+      const encryptedArrayBuffer = await blobData.arrayBuffer();
+      const decryptedBuffer = await cryptoService.decryptData(encryptedArrayBuffer, ef.data_iv, masterKey);
       const blob = new Blob([decryptedBuffer], { type: fileMeta.type });
-      
-      // Trigger download
+
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -226,16 +353,40 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       addToast('success', 'File decrypted successfully');
     } catch (e) {
       console.error(e);
-      addToast('error', 'Decryption failed (Corrupted data?)');
+      addToast('error', 'Download failed');
+    }
+  };
+
+  const getThumbnail = async (fileId: string): Promise<string | undefined> => {
+    if (!user || !masterKey) return undefined;
+    try {
+      const { data: ef } = await supabase.from('files').select('*').eq('id', fileId).single();
+      if (!ef || !ef.thumbnail_path) return undefined;
+
+      const { data: blobData } = await supabase.storage.from('vault').download(ef.thumbnail_path);
+      if (!blobData) return undefined;
+
+      const encryptedArrayBuffer = await blobData.arrayBuffer();
+      const decryptedBuffer = await cryptoService.decryptData(encryptedArrayBuffer, ef.thumbnail_iv, masterKey);
+      const blob = new Blob([decryptedBuffer], { type: 'image/jpeg' });
+      return URL.createObjectURL(blob);
+    } catch (e: any) {
+      console.error("Get Thumbnail Error:", e);
+      return undefined;
     }
   };
 
   const deleteFile = async (fileId: string) => {
-    if (!user) return;
     try {
-      await dbService.deleteFile(fileId);
-      addToast('success', 'File deleted permanently');
-      loadFiles();
+      const { data: ef } = await supabase.from('files').select('*').eq('id', fileId).single();
+      if (ef) {
+        const paths = [ef.storage_path];
+        if (ef.thumbnail_path) paths.push(ef.thumbnail_path);
+        await supabase.storage.from('vault').remove(paths);
+        await supabase.from('files').delete().eq('id', fileId);
+      }
+      setFiles(prev => prev.filter(f => f.id !== fileId));
+      addToast('success', 'File deleted');
     } catch (e) {
       addToast('error', 'Delete failed');
     }
@@ -243,16 +394,10 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
   return (
     <VaultContext.Provider value={{
-      user,
-      files,
-      isLoading,
-      toasts,
-      login,
-      register,
-      logout,
-      uploadFile,
-      downloadFile,
-      deleteFile,
+      user, files, isLoading, toasts,
+      login, register, logout,
+      uploadFile, downloadFile, deleteFile, getThumbnail,
+      resetPassword, updatePassword,
       refreshFiles: loadFiles
     }}>
       {children}
@@ -262,8 +407,6 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
 
 export const useVault = () => {
   const context = useContext(VaultContext);
-  if (context === undefined) {
-    throw new Error('useVault must be used within a VaultProvider');
-  }
+  if (context === undefined) throw new Error('useVault must be used within a VaultProvider');
   return context;
 };
