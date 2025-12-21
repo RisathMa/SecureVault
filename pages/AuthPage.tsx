@@ -14,12 +14,35 @@ const AuthPage: React.FC = () => {
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
 
-  // Handle password reset callback from URL
+  // Handle redirects from Supabase (verification or password recovery)
   useEffect(() => {
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('reset') === 'true') {
-      setMode('update');
-    }
+    const handleRedirect = async () => {
+      // Supabase uses URL fragments/hashes for redirects (e.g. #access_token=...&type=recovery)
+      const hash = window.location.hash;
+      if (!hash) return;
+
+      const params = new URLSearchParams(hash.substring(1));
+      const type = params.get('type');
+      const error = params.get('error_description');
+
+      if (error) {
+        setError(decodeURIComponent(error.replace(/\+/g, ' ')));
+        return;
+      }
+
+      if (type === 'recovery') {
+        setMode('update');
+        setSuccess('Recovery link verified. Please set your new master password.');
+        // Clear the hash so it doesn't trigger again
+        window.history.replaceState(null, '', window.location.pathname);
+      } else if (type === 'signup') {
+        setMode('login');
+        setSuccess('Email verified! You can now log in to your vault.');
+        window.history.replaceState(null, '', window.location.pathname);
+      }
+    };
+
+    handleRedirect();
   }, []);
 
   const handleSubmit = async (e: React.FormEvent) => {

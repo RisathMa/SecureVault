@@ -185,8 +185,9 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsLoading(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth?reset=true`,
+        redirectTo: `${window.location.origin}/auth`,
       });
+      if (error) throw error;
       addToast('success', 'Recovery email sent. Please check your inbox.');
       return true;
     } catch (e: any) {
@@ -200,10 +201,33 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updatePassword = async (password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
-      const { error } = await supabase.auth.updateUser({ password });
-      if (error) throw error;
+      // 1. Derive NEW Key
+      const salt = cryptoService.generateSalt();
+      const key = await cryptoService.deriveMasterKey(password, salt);
+      const verifier = await cryptoService.generateVerifier(key);
+
+      // 2. Update Supabase Auth (Password)
+      const { error: authError } = await supabase.auth.updateUser({
+        password,
+        data: { salt, verifier } // Also update metadata
+      });
+      if (authError) throw authError;
+
+      // 3. Update public.users table (Public key info)
+      if (user) {
+        const { error: dbError } = await supabase.from('users').update({
+          salt,
+          verifier
+        }).eq('id', user.id);
+        if (dbError) console.error("Note: Public profile update failed during password reset.");
+      }
+
       addToast('success', 'Password updated successfully. Please log in.');
       return true;
+    } catch (e: any) {
+      console.error("Update Password Error:", e);
+      addToast('error', e.message || 'Failed to update password');
+      return false;
     } finally {
       setIsLoading(false);
     }
