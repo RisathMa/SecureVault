@@ -131,6 +131,7 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsLoading(true);
     try {
       // 1. SignIn
+      addToast('info', 'Connecting to secure vault...');
       const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
         email,
         password,
