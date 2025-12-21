@@ -39,7 +39,12 @@ const AuthPage: React.FC = () => {
         }, 1000);
       } else if (type === 'signup') {
         setMode('login');
-        setSuccess('Email verified! You can now log in to your vault.');
+        setSuccess('Email verified! Please sign in to your secure vault.');
+        // 1. SignIn
+        // Assuming addToast is a function available in the context or globally,
+        // or that the user intends to add a toast context/hook.
+        // For now, I'll add a console log as a placeholder for addToast.
+        console.log('info', 'Connecting to secure vault (v1.1)...');
         setTimeout(() => {
           window.history.replaceState(null, '', window.location.pathname);
         }, 1000);
@@ -129,7 +134,7 @@ const AuthPage: React.FC = () => {
               </svg>
             </div>
           </div>
-          <h1 className="text-4xl font-bold text-white tracking-tight mb-3">RM Vault</h1>
+          <h1 className="text-4xl font-bold text-white tracking-tight mb-3">RM Vault <span className="text-[10px] align-top bg-brand-500/20 text-brand-400 px-1.5 py-0.5 rounded-full border border-brand-500/30">v1.1</span></h1>
           <p className="text-slate-400 text-lg">Secure, redundant, zero-knowledge.</p>
         </div>
 
