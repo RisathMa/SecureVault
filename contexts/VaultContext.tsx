@@ -67,14 +67,14 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const register = async (email: string, password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
-      // 1. Derive Key FIRST so we can save it with the user
+      // 1. Derive Key
+      addToast('info', 'Securing your vault with local encryption...');
       const salt = cryptoService.generateSalt();
       const key = await cryptoService.deriveMasterKey(password, salt);
       const verifier = await cryptoService.generateVerifier(key);
 
-      // 2. SignUp with Supabase & Store Metadata
-      // CRITICAL: We store salt/verifier in user_metadata so it persists 
-      // even if RLS blocks DB inserts for unverified users.
+      // 2. SignUp with Supabase
+      addToast('info', 'Creating secure account...');
       const { data: authData, error: authError } = await supabase.auth.signUp({
         email,
         password,
@@ -89,32 +89,39 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
       });
 
       if (authError) throw authError;
-      if (!authData.user) throw new Error("No user created");
+      if (!authData.user) throw new Error("Account creation failed. No user object returned.");
 
       const uid = authData.user.id;
 
-      // 3. Attempt to Sync to public.users (Optional/Best Effort)
-      // This might fail if email is not verified yet due to RLS, but that's okay
-      // because we have the data in metadata now.
-      await supabase.from('users').insert([{
+      // 3. Sync to public.users (Fire and forget/Best Effort)
+      // We don't want a database RLS issue to block registration.
+      // The login process will catch up later if needed.
+      supabase.from('users').insert([{
         id: uid,
         email: email,
         salt,
         verifier
       }]).then(({ error }) => {
-        if (error) console.log("Note: Public profile creation delayed until verification.");
+        if (error) console.warn("Public profile sync delayed until after verification/first login.");
+        else console.log("Public profile synced.");
       });
 
-      // 4. Log in immediately if session is active (no email verify required)
+      // 4. Handle Session
       if (authData.session) {
+        // Auto-login (if confirm email is off)
         setUser({ id: uid, username: email.split('@')[0], salt, verifier });
         setMasterKey(key);
-        addToast('success', 'Vault created successfully');
+        addToast('success', 'Vault created and unlocked!');
       } else {
-        addToast('info', 'Please check your email to verify account');
+        // Verification required
+        addToast('success', 'Verification email sent! Check your inbox.');
       }
 
       return true;
+    } catch (e: any) {
+      console.error("Registration failed:", e);
+      addToast('error', e.message || 'Registration failed. Please try again.');
+      return false;
     } finally {
       setIsLoading(false);
     }
