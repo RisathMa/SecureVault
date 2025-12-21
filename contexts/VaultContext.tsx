@@ -42,6 +42,21 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         setFiles([]);
         setIsLoading(false);
       } else {
+        // We have a session! If we don't have a user state yet, fetch it.
+        // This is crucial for password recovery flows where the user landing from email
+        // might not be in the state yet.
+        const { data: { user: authUser } } = await supabase.auth.getUser();
+        if (authUser) {
+          // If we have metadata, we can set the user. 
+          // Note: Master key will still be null until they provide the password (if they are logging in normally).
+          // But for password recovery, we just need the user ID to update the DB later.
+          setUser({
+            id: authUser.id,
+            username: authUser.user_metadata?.username || authUser.email?.split('@')[0] || 'User',
+            salt: authUser.user_metadata?.salt,
+            verifier: authUser.user_metadata?.verifier
+          });
+        }
         setIsLoading(false);
       }
     });
@@ -202,25 +217,31 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
   const updatePassword = async (password: string): Promise<boolean> => {
     setIsLoading(true);
     try {
-      // 1. Derive NEW Key
+      // 1. Ensure we have a session
+      const { data: { user: authUser }, error: userError } = await supabase.auth.getUser();
+      if (userError || !authUser) throw new Error("Authentication session missing. Please try the reset link again.");
+
+      // 2. Derive NEW Key
       const salt = cryptoService.generateSalt();
       const key = await cryptoService.deriveMasterKey(password, salt);
       const verifier = await cryptoService.generateVerifier(key);
 
-      // 2. Update Supabase Auth (Password)
+      // 3. Update Supabase Auth (Password)
       const { error: authError } = await supabase.auth.updateUser({
         password,
         data: { salt, verifier } // Also update metadata
       });
       if (authError) throw authError;
 
-      // 3. Update public.users table (Public key info)
-      if (user) {
-        const { error: dbError } = await supabase.from('users').update({
-          salt,
-          verifier
-        }).eq('id', user.id);
-        if (dbError) console.error("Note: Public profile update failed during password reset.");
+      // 4. Update public.users table (Public key info)
+      const { error: dbError } = await supabase.from('users').update({
+        salt,
+        verifier
+      }).eq('id', authUser.id);
+
+      if (dbError) {
+        console.error("Note: Public profile update failed during password reset:", dbError);
+        // We don't throw here because the main Auth update succeeded.
       }
 
       addToast('success', 'Password updated successfully. Please log in.');

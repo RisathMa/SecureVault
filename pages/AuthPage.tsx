@@ -33,12 +33,16 @@ const AuthPage: React.FC = () => {
       if (type === 'recovery') {
         setMode('update');
         setSuccess('Recovery link verified. Please set your new master password.');
-        // Clear the hash so it doesn't trigger again
-        window.history.replaceState(null, '', window.location.pathname);
+        // Don't clear immediately, let the session stabilize
+        setTimeout(() => {
+          window.history.replaceState(null, '', window.location.pathname);
+        }, 1000);
       } else if (type === 'signup') {
         setMode('login');
         setSuccess('Email verified! You can now log in to your vault.');
-        window.history.replaceState(null, '', window.location.pathname);
+        setTimeout(() => {
+          window.history.replaceState(null, '', window.location.pathname);
+        }, 1000);
       }
     };
 
