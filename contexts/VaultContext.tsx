@@ -64,6 +64,7 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
         email,
         password,
         options: {
+          emailRedirectTo: `${window.location.origin}/`,
           data: {
             username: email.split('@')[0],
             salt: salt,
@@ -185,7 +186,7 @@ export const VaultProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     setIsLoading(true);
     try {
       const { error } = await supabase.auth.resetPasswordForEmail(email, {
-        redirectTo: `${window.location.origin}/auth`,
+        redirectTo: `${window.location.origin}/`,
       });
       if (error) throw error;
       addToast('success', 'Recovery email sent. Please check your inbox.');
