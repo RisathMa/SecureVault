@@ -35,6 +35,7 @@ const Dashboard: React.FC = () => {
   const { files, logout, uploadFile, downloadFile, deleteFile, user } = useVault();
   const [view, setView] = useState<FileViewMode>(FileViewMode.LIST);
   const [dragActive, setDragActive] = useState(false);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const totalSize = files.reduce((acc, file) => acc + file.size, 0);
@@ -78,23 +79,35 @@ const Dashboard: React.FC = () => {
   };
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-900">
-      <Sidebar currentView={view} setView={setView} storageUsage={totalSize} />
+    <div className="flex h-screen overflow-hidden bg-slate-900 relative">
+      <Sidebar
+        currentView={view}
+        setView={setView}
+        storageUsage={totalSize}
+        isOpen={isSidebarOpen}
+        onClose={() => setIsSidebarOpen(false)}
+      />
 
       <div className="flex-1 flex flex-col min-w-0">
         {/* Header */}
-        <header className="h-16 bg-brand-900/50 backdrop-blur border-b border-brand-800 flex items-center justify-between px-6">
-          <div className="flex items-center flex-1 max-w-lg">
-            <h1 className="text-xl font-bold text-white tracking-tight">Vault<span className="text-brand-500">.</span></h1>
+        <header className="h-16 bg-brand-900/50 backdrop-blur border-b border-brand-800 flex items-center justify-between px-4 md:px-6">
+          <div className="flex items-center space-x-3 flex-1 min-w-0">
+            <button
+              onClick={() => setIsSidebarOpen(true)}
+              className="p-2 -ml-2 text-slate-400 hover:text-white md:hidden"
+            >
+              <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+            </button>
+            <h1 className="text-xl font-bold text-white tracking-tight truncate">Vault<span className="text-brand-500">.</span></h1>
             {/* Search could go here */}
           </div>
-          <div className="flex items-center space-x-4">
-            <div className="flex flex-col items-end">
+          <div className="flex items-center space-x-2 md:space-x-4">
+            <div className="hidden sm:flex flex-col items-end">
               <span className="text-sm font-medium text-white">{user?.username}</span>
               <span className="text-xs text-brand-500">Encrypted Session</span>
             </div>
-            <Button variant="ghost" onClick={logout} title="Lock Vault">
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
+            <Button variant="ghost" onClick={logout} title="Lock Vault" className="p-2">
+              <svg className="w-5 h-5 md:mr-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 15v2m-6 4h12a2 2 0 002-2v-6a2 2 0 00-2-2H6a2 2 0 00-2 2v6a2 2 0 002 2zm10-10V7a4 4 0 00-8 0v4h8z" /></svg>
             </Button>
           </div>
         </header>
@@ -113,10 +126,10 @@ const Dashboard: React.FC = () => {
             </div>
           )}
 
-          <div className="flex justify-between items-center mb-6">
-            <div className="flex items-center space-x-4">
+          <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 mb-6">
+            <div className="flex items-center space-x-4 w-full sm:w-auto">
               <h2 className="text-xl font-semibold text-white">Files</h2>
-              <div className="bg-brand-800 rounded-lg p-1 flex">
+              <div className="bg-brand-800 rounded-lg p-1 flex ml-auto sm:ml-0">
                 <button onClick={() => setView(FileViewMode.LIST)} className={`p-1.5 rounded ${view === FileViewMode.LIST ? 'bg-brand-600 text-white shadow' : 'text-slate-400 hover:text-white'}`}>
                   <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
                 </button>
@@ -125,9 +138,9 @@ const Dashboard: React.FC = () => {
                 </button>
               </div>
             </div>
-            <div className="flex space-x-2">
+            <div className="flex space-x-2 w-full sm:w-auto">
               <input type="file" ref={fileInputRef} className="hidden" onChange={handleFileChange} />
-              <Button onClick={() => fileInputRef.current?.click()}>
+              <Button onClick={() => fileInputRef.current?.click()} className="flex-1 sm:flex-none">
                 <svg className="w-5 h-5 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
                 Upload
               </Button>
@@ -135,7 +148,7 @@ const Dashboard: React.FC = () => {
           </div>
 
           {files.length === 0 ? (
-            <div className="flex flex-col items-center justify-center h-64 border-2 border-dashed border-brand-700 rounded-lg">
+            <div className="flex flex-col items-center justify-center min-h-[16rem] border-2 border-dashed border-brand-700 rounded-lg p-6 text-center">
               <svg className="w-16 h-16 text-slate-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 13h6m-3-3v6m5 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
               <p className="text-slate-400">Vault is empty.</p>
               <button
@@ -146,37 +159,37 @@ const Dashboard: React.FC = () => {
               </button>
             </div>
           ) : view === FileViewMode.LIST ? (
-            <div className="bg-brand-900 border border-brand-800 rounded-lg overflow-hidden shadow">
-              <table className="w-full text-left">
+            <div className="bg-brand-900 border border-brand-800 rounded-lg shadow overflow-x-auto">
+              <table className="w-full text-left min-w-[600px]">
                 <thead className="bg-brand-800 text-xs uppercase text-slate-400 font-semibold">
                   <tr>
-                    <th className="px-6 py-4">Name</th>
-                    <th className="px-6 py-4">Size</th>
-                    <th className="px-6 py-4">Date</th>
-                    <th className="px-6 py-4 text-right">Actions</th>
+                    <th className="px-4 md:px-6 py-4">Name</th>
+                    <th className="px-4 md:px-6 py-4">Size</th>
+                    <th className="px-4 md:px-6 py-4 hidden sm:table-cell">Date</th>
+                    <th className="px-4 md:px-6 py-4 text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-brand-800">
                   {files.map((file) => (
-                    <tr key={file.id} className="hover:bg-brand-800/50 transition-colors group">
-                      <td className="px-6 py-4">
+                    <tr key={file.id} className="hover:bg-brand-800/50 transition-colors group text-sm">
+                      <td className="px-4 md:px-6 py-4">
                         <div className="flex items-center">
-                          <div className="w-10 h-10 rounded bg-brand-800 flex-shrink-0 mr-3 border border-brand-700 overflow-hidden">
+                          <div className="w-8 h-8 md:w-10 md:h-10 rounded bg-brand-800 flex-shrink-0 mr-3 border border-brand-700 overflow-hidden">
                             {file.type.startsWith('image/')
                               ? <FileThumbnail fileId={file.id} type={file.type} />
-                              : <div className="w-full h-full flex items-center justify-center text-slate-500"><svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg></div>
+                              : <div className="w-full h-full flex items-center justify-center text-slate-500"><svg className="w-4 h-4 md:w-5 md:h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg></div>
                             }
                           </div>
                           <div className="min-w-0">
-                            <div className="font-medium text-white truncate max-w-xs" title={file.name}>{file.name}</div>
-                            <div className="text-xs text-slate-500">{file.type || 'Unknown'}</div>
+                            <div className="font-medium text-white truncate max-w-[120px] sm:max-w-xs" title={file.name}>{file.name}</div>
+                            <div className="text-[10px] md:text-xs text-slate-500 truncate max-w-[100px]">{file.type || 'Unknown'}</div>
                           </div>
                         </div>
                       </td>
-                      <td className="px-6 py-4 text-sm text-slate-300 font-mono">{formatSize(file.size)}</td>
-                      <td className="px-6 py-4 text-sm text-slate-400">{formatDate(file.createdAt)}</td>
-                      <td className="px-6 py-4 text-right">
-                        <div className="flex justify-end space-x-2">
+                      <td className="px-4 md:px-6 py-4 text-slate-300 font-mono whitespace-nowrap">{formatSize(file.size)}</td>
+                      <td className="px-4 md:px-6 py-4 text-slate-400 hidden sm:table-cell whitespace-nowrap">{formatDate(file.createdAt)}</td>
+                      <td className="px-4 md:px-6 py-4 text-right">
+                        <div className="flex justify-end space-x-1 md:space-x-2">
                           <button onClick={() => downloadFile(file.id)} className="p-2 text-slate-400 hover:text-brand-400 transition-colors" title="Decrypt & Download">
                             <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                           </button>
@@ -191,16 +204,16 @@ const Dashboard: React.FC = () => {
               </table>
             </div>
           ) : (
-            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-4">
+            <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 2xl:grid-cols-5 gap-3 md:gap-4">
               {files.map((file) => (
                 <div key={file.id} className="bg-brand-900 border border-brand-800 rounded-lg overflow-hidden hover:border-brand-600 transition-colors group relative">
                   <div className="aspect-square bg-brand-800 relative">
                     {file.type.startsWith('image/')
                       ? <FileThumbnail fileId={file.id} type={file.type} />
-                      : <div className="w-full h-full flex items-center justify-center text-slate-600"><svg className="w-16 h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></div>
+                      : <div className="w-full h-full flex items-center justify-center text-slate-600"><svg className="w-12 h-12 md:w-16 md:h-16" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg></div>
                     }
                     {/* Overlay Actions */}
-                    <div className="absolute inset-0 bg-black/60 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-3">
+                    <div className="absolute inset-0 bg-black/60 md:opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center space-x-3">
                       <button onClick={() => downloadFile(file.id)} className="p-2 bg-brand-600 text-white rounded-full hover:bg-brand-500 shadow-lg" title="Download">
                         <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                       </button>
@@ -209,9 +222,9 @@ const Dashboard: React.FC = () => {
                       </button>
                     </div>
                   </div>
-                  <div className="p-3">
-                    <h3 className="text-sm font-medium text-white truncate" title={file.name}>{file.name}</h3>
-                    <p className="text-xs text-slate-500 mt-1">{formatSize(file.size)}</p>
+                  <div className="p-2 md:p-3">
+                    <h3 className="text-xs md:text-sm font-medium text-white truncate" title={file.name}>{file.name}</h3>
+                    <p className="text-[10px] md:text-xs text-slate-500 mt-1">{formatSize(file.size)}</p>
                   </div>
                 </div>
               ))}
